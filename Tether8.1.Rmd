@@ -1,0 +1,235 @@
+---
+title: "Tether Time Series Analysis"
+author: "Keyuan Tina Cao"
+date: "2025-07-24"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(lubridate)
+library(forecast)
+library(rugarch)
+library(FinTS)
+```
+
+## 1. Data
+
+```{r}
+data <- read_csv("usdt_usd_data.csv")
+data <- data %>%
+  mutate(
+    Date = as.Date(Date),
+    Return = (USDT.USD.Adjusted / lag(USDT.USD.Adjusted)) - 1,
+    Log_Return = log(USDT.USD.Adjusted / lag(USDT.USD.Adjusted)),
+    Square_Return = Return^2
+  ) %>%
+  na.omit()
+
+latest_date <- max(data$Date)
+one_year_before <- latest_date - years(1)
+data_usdt <- data %>% filter(Date >= one_year_before & Date <= latest_date)
+```
+
+## 2. Log Return Plot
+
+```{r}
+plot(data_usdt$Date, data_usdt$Log_Return, type = "l", col = "steelblue", lwd = 1.2,
+     main = "Log Return over Time", xlab = "Date", ylab = "Log Return")
+```
+
+## 3. Naive Drift Model
+
+```{r}
+log_ret_ts <- ts(data_usdt$Log_Return)
+fit_naive_drift <- rwf(log_ret_ts, drift = TRUE)
+fit_naive_drift$model
+Box.test(residuals(fit_naive_drift), lag = 20, type = "Ljung-Box")
+checkresiduals(residuals(fit_naive_drift))
+```
+
+## 4. Log Return ACF & PACF
+
+```{r}
+par(mfrow = c(2, 2))
+acf(log_ret_ts, main = "ACF of Log Return")
+pacf(log_ret_ts, main = "PACF of Log Return")
+hist(log_ret_ts, main = "Hist of Log Return")
+```
+
+## 5. Automatic ARIMA Selection
+
+```{r}
+best_arima <- auto.arima(log_ret_ts, stationary = TRUE)
+summary(best_arima)
+```
+
+### Residual Diagnostics: ARIMA
+
+```{r}
+res_arima <- residuals(best_arima)
+acf(res_arima, main = "ACF of ARIMA Residuals")
+pacf(res_arima, main = "PACF of ARIMA Residuals")
+Box.test(res_arima, lag = 20, type = "Ljung-Box")
+checkresiduals(res_arima)
+```
+
+## 6. Square Return Plot, ACF & PACF
+
+```{r}
+data_usdt <- data_usdt %>%
+  mutate(Square_Return = Return^2)
+plot(data_usdt$Date, data_usdt$Square_Return, type = "l", col = "steelblue", lwd = 1.2,
+     main = "Square Return over Time", xlab = "Date", ylab = "Square Return")
+acf(data_usdt$Square_Return, main = "ACF of Square Return")
+pacf(data_usdt$Square_Return, main = "PACF of Square Return")
+```
+
+## 7. Automatic GARCH and eGARCH Selection
+
+```{r}
+results_garch <- data.frame()
+for (p in 1:2) {
+  for (q in 1:2) {
+    spec <- ugarchspec(
+      variance.model = list(model = "sGARCH", garchOrder = c(p, q)),
+      mean.model = list(armaOrder = c(2, 2), include.mean = FALSE),
+      distribution.model = "norm"
+    )
+    fit <- tryCatch(ugarchfit(spec, data = log_ret_ts, solver = "hybrid"), error = function(e) NULL)
+    if (!is.null(fit)) {
+      aic <- infocriteria(fit)[1]
+      results_garch <- rbind(results_garch, data.frame(Model = paste0("GARCH(", p, ",", q, ")"), AIC = aic))
+    }
+  }
+}
+results_garch[order(results_garch$AIC), ]
+
+results_egarch <- data.frame()
+for (p in 1:2) {
+  for (q in 1:2) {
+    spec <- ugarchspec(
+      variance.model = list(model = "eGARCH", garchOrder = c(p, q)),
+      mean.model = list(armaOrder = c(2, 2), include.mean = FALSE),
+      distribution.model = "std"
+    )
+    fit <- tryCatch(ugarchfit(spec, data = log_ret_ts, solver = "hybrid"), error = function(e) NULL)
+    if (!is.null(fit)) {
+      aic <- infocriteria(fit)[1]
+      results_egarch <- rbind(results_egarch, data.frame(Model = paste0("eGARCH(", p, ",", q, ")"), AIC = aic))
+    }
+  }
+}
+results_egarch[order(results_egarch$AIC), ]
+```
+
+
+```{r}
+library(rugarch)
+
+arma_order <- c(2, 2)
+
+# === 1. sGARCH + normal ===
+spec_garch_norm <- ugarchspec(
+  variance.model = list(model = "sGARCH", garchOrder = c(1, 1)),
+  mean.model     = list(armaOrder = arma_order, include.mean = FALSE),
+  distribution.model = "norm"
+)
+fit_garch_norm <- ugarchfit(
+  spec = spec_garch_norm,
+  data = log_ret_ts,
+  fit.control = list(fixed.se = 0)
+)
+show(fit_garch_norm)
+infocriteria(fit_garch_norm)
+
+# === 2. sGARCH + student-t ===
+spec_garch_std <- ugarchspec(
+  variance.model = list(model = "sGARCH", garchOrder = c(1, 1)),
+  mean.model     = list(armaOrder = arma_order, include.mean = FALSE),
+  distribution.model = "std"
+)
+fit_garch_std <- ugarchfit(
+  spec = spec_garch_std,
+  data = log_ret_ts,
+  fit.control = list(fixed.se = 0)
+)
+show(fit_garch_std)
+infocriteria(fit_garch_std)
+
+# === 3. eGARCH + normal ===
+spec_eGARCH_norm <- ugarchspec(
+  variance.model = list(model = "eGARCH", garchOrder = c(1, 1)),
+  mean.model     = list(armaOrder = arma_order, include.mean = FALSE),
+  distribution.model = "norm"
+)
+fit_eGARCH_norm <- ugarchfit(
+  spec = spec_eGARCH_norm,
+  data = log_ret_ts,
+  fit.control = list(fixed.se = 0)
+)
+show(fit_eGARCH_norm)
+infocriteria(fit_eGARCH_norm)
+
+# === 4. eGARCH + student-t ===
+spec_eGARCH_std <- ugarchspec(
+  variance.model = list(model = "eGARCH", garchOrder = c(1, 1)),
+  mean.model     = list(armaOrder = arma_order, include.mean = FALSE),
+  distribution.model = "std"
+)
+fit_eGARCH_std <- ugarchfit(
+  spec = spec_eGARCH_std,
+  data = log_ret_ts,
+  fit.control = list(fixed.se = 0)
+)
+show(fit_eGARCH_std)
+infocriteria(fit_eGARCH_std)
+
+```
+
+```{r}
+fits <- list(
+  sGARCH_norm  = fit_garch_norm,
+  sGARCH_std   = fit_garch_std,
+  eGARCH_norm  = fit_eGARCH_norm,
+  eGARCH_std   = fit_eGARCH_std
+)
+
+manual_aic_bic <- data.frame(
+  Model = names(fits),
+  AIC = sapply(fits, function(x) {
+    LLH <- x@fit$LLH
+    k   <- length(x@fit$coef)
+    if (is.na(LLH)) return(NA)
+    -2 * LLH + 2 * k
+  }),
+  BIC = sapply(fits, function(x) {
+    LLH <- x@fit$LLH
+    k   <- length(x@fit$coef)
+    n   <- length(x@model$modeldata$data)
+    if (is.na(LLH)) return(NA)
+    -2 * LLH + log(n) * k
+  })
+)
+manual_aic_bic[order(manual_aic_bic$AIC), ]
+```
+
+### Residual Diagnostics: eGARCH std
+
+```{r}
+infocriteria(fit_eGARCH_std)  
+
+res_egarch_std <- residuals(fit_eGARCH_std, standardize = TRUE)
+par(mfrow = c(2, 1))
+acf(res_egarch_std, main = "ACF of Standardized eGARCH-Std Residuals")
+pacf(res_egarch_std, main = "PACF of Standardized eGARCH-Std Residuals")
+
+Box.test(res_egarch_std, lag = 20, type = "Ljung-Box")
+library(FinTS)
+```
+
+```
+
