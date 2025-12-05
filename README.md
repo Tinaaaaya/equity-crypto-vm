@@ -1,6 +1,6 @@
 # Financial Sentiment Analysis with Machine Learning & Deep Learning
 
-This project documents my coding skills in R through a sentiment-analysis task using financial social-media comments.  
+A sentiment-analysis task using financial social-media comments.  
 The raw data and sentiment coding come from the replication package of:
 
 > Malo, P., Sinha, A., Korhonen, P., Wallenius, J., & Takala, P. (2014).  
