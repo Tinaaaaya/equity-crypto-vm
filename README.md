@@ -142,8 +142,7 @@ lstm_model <- h2o.deeplearning(
 | Random Forest       | 80.6%         |
 
 
-Logistic Regression performs best.
-This is common in TF-IDF text tasks due to strong linear separability.
+**Logistic Regression performs best. This is common in TF-IDF text tasks due to strong linear separability.**
 
 <img width="2020" height="880" alt="image" src="https://github.com/user-attachments/assets/1494503d-4408-4f79-94ed-0e9dad07955d" />
 
